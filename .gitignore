@@ -1,0 +1,6 @@
+# Default-deny: everything in this directory is assumed secret.
+# Only explicitly whitelisted files are tracked.
+*
+!.gitignore
+!README.md
+!aurora_wake.example.ino

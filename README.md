@@ -1,7 +1,7 @@
 # Aurora — Wake-on-LAN over WiFi with a WT32-ETH01
 
 Wake a sleeping PC from anywhere on your WiFi (and later, from anywhere at all)
-using a ~$5 ESP32 board with a built-in Ethernet jack.
+using an inexpensive ESP32 board with a built-in Ethernet jack.
 
 ```
 phone/laptop → WiFi → HTTP /wake?token=… → WT32-ETH01 → magic packet → PC's wired NIC
@@ -29,11 +29,15 @@ NIC and is the only place the magic packet ever goes.
 
 ## Hardware
 
-- WT32-ETH01 board
-- 2× CP2102 USB-UART dongles — one for the first (serial) flash, one living
-  in a USB wall charger as the permanent power supply. After the first flash,
-  updates go over WiFi (OTA) and the data dongle retires.
-- Jumper wires, one Ethernet cable.
+What we actually used:
+
+- [WT32-ETH01 board](https://www.amazon.com/dp/B0HB3B557Z) (ESP32 + LAN8720
+  Ethernet)
+- [CP2102 USB-UART dongles, 2-pack](https://www.amazon.com/dp/B0GWVV83SK) —
+  one for the first (serial) flash, one living in a USB wall charger as the
+  permanent power supply. After the first flash, updates go over WiFi (OTA)
+  and the data dongle retires.
+- Jumper wires, one Ethernet cable, a USB wall charger.
 
 ## Setup
 

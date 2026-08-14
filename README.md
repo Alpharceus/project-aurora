@@ -79,6 +79,10 @@ arduino-cli core install esp32:esp32
 arduino-cli compile --fqbn esp32:esp32:wt32-eth01 aurora_wake
 ```
 
+That core install is the *only* dependency. Every header the sketch includes
+(`ETH.h`, `WiFi.h`, `WiFiUdp.h`, `WebServer.h`, `ArduinoOTA.h`) is bundled
+with the esp32 core — there are no separate libraries to hunt down.
+
 ### 4. First flash (serial — the board has no USB port)
 
 Wiring, with the board **unpowered**:

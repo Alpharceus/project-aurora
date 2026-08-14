@@ -3,4 +3,5 @@
 *
 !.gitignore
 !README.md
+!LICENSE
 !aurora_wake.example.ino

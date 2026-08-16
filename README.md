@@ -1,7 +1,9 @@
-# Aurora — Wake-on-LAN over WiFi with a WT32-ETH01
+﻿# Aurora — Wake-on-LAN over WiFi with a WT32-ETH01
 
 Wake a sleeping PC from anywhere on your WiFi (and later, from anywhere at all)
-using an inexpensive ESP32 board with a built-in Ethernet jack.
+using an inexpensive ESP32 board with a built-in Ethernet jack. Since v2 the
+same board also detects your phone's presence over BLE — walk in the door
+after being away and the tower wakes itself, no app running on the phone.
 
 ```
 phone/laptop → WiFi → HTTP /wake?token=… → WT32-ETH01 → magic packet → PC's wired NIC
@@ -76,12 +78,20 @@ arduino-cli config init
 arduino-cli config add board_manager.additional_urls https://espressif.github.io/arduino-esp32/package_esp32_index.json
 arduino-cli core update-index
 arduino-cli core install esp32:esp32
-arduino-cli compile --fqbn esp32:esp32:wt32-eth01 aurora_wake
+arduino-cli lib install NimBLE-Arduino
+arduino-cli compile --fqbn esp32:esp32:wt32-eth01:PartitionScheme=min_spiffs aurora_wake
 ```
 
-That core install is the *only* dependency. Every header the sketch includes
-(`ETH.h`, `WiFi.h`, `WiFiUdp.h`, `WebServer.h`, `ArduinoOTA.h`) is bundled
-with the esp32 core — there are no separate libraries to hunt down.
+Two dependencies: the esp32 core (bundles `ETH.h`, `WiFi.h`, `WiFiUdp.h`,
+`WebServer.h`, `ArduinoOTA.h`, `Preferences.h`, mbedtls) and NimBLE-Arduino
+for the v2 presence scanning.
+
+**The partition scheme matters and cannot change over OTA.** The default
+scheme has 1.25MB app slots; the v2 sketch is ~1.29MB and won't fit. Set
+`PartitionScheme=min_spiffs` (1.9MB slots) at the **first serial flash** —
+if you flashed with defaults, you get exactly one more date with the UART
+dongle. (Don't trust the compile output's "Maximum is 8388608 bytes" under
+the default scheme — that's a boards.txt bug; the real slot is 1.25MB.)
 
 ### 4. First flash (serial — the board has no USB port)
 
@@ -98,7 +108,7 @@ Then: jumper **IO0 → GND**, apply power (IO0 is sampled only at power-on),
 and:
 
 ```
-arduino-cli upload --fqbn esp32:esp32:wt32-eth01 -p COM7 aurora_wake
+arduino-cli upload --fqbn esp32:esp32:wt32-eth01:PartitionScheme=min_spiffs -p COM7 aurora_wake
 ```
 
 Afterward: power off, remove the IO0 jumper, power on. Watch the serial line
@@ -123,8 +133,8 @@ drops in sleep, revisit the NIC power settings; that's the main failure mode.
 ### 7. OTA from then on
 
 ```
-arduino-cli compile --fqbn esp32:esp32:wt32-eth01 aurora_wake
-arduino-cli upload --fqbn esp32:esp32:wt32-eth01 -p <board-ip> --upload-field password=<token> aurora_wake
+arduino-cli compile --fqbn esp32:esp32:wt32-eth01:PartitionScheme=min_spiffs aurora_wake
+arduino-cli upload --fqbn esp32:esp32:wt32-eth01:PartitionScheme=min_spiffs -p <board-ip> --upload-field password=<token> aurora_wake
 ```
 
 On Windows you must allow espota inbound through the firewall once (the
@@ -133,6 +143,40 @@ On Windows you must allow espota inbound through the firewall once (the
 ```
 netsh advfirewall firewall add rule name="ESP32 OTA (espota)" dir=in action=allow program="%LOCALAPPDATA%\Arduino15\packages\esp32\hardware\esp32\<ver>\tools\espota.exe" enable=yes
 ```
+
+## v2: phone presence (BLE), and the auto-wake
+
+The board passively recognizes your phone via **IRK resolution**: pair once,
+and it resolves the phone's randomized Bluetooth addresses forever — no app,
+no beacon, no battery cost on the phone. Arrive home after ≥10 minutes away
+and the board fires the magic packet by itself.
+
+Setup (once):
+
+1. `GET /pair?token=…` — opens a 2-minute pairing window.
+2. Pair from the phone. **Samsung/One UI hides generic BLE devices** in its
+   Bluetooth-settings list, so use a BLE app (e.g. nRF Connect): scan →
+   connect to `aurora` → the board demands security → Android pops the
+   standard pair dialog → accept. Done; the bond survives OTA updates.
+3. Watch `GET /status` — `phone: present (last seen Ns ago, X dBm)`.
+
+Tuning via `GET /config?token=…` (persisted in NVS): `away_s` (seconds
+unseen before "away", default 600), `arrival_wake` (0/1), `rssi_min`
+(ignore sightings weaker than this dBm).
+
+`GET /forget?token=…` wipes bonds for re-pairing.
+
+Two findings worth stealing for your own build:
+
+- **You may never see a resolvable RPA in your scan callback.** NimBLE loads
+  bonded-peer IRKs into its resolving machinery, so the phone's
+  advertisements arrive already resolved, bearing the *identity address*
+  from pairing. Match on that identity address; keep manual `ah()` AES
+  resolution only as a fallback (ours has never once fired).
+- **An idle Samsung phone advertises plenty** (SmartThings Find, Fast Pair):
+  presence detection worked with the phone asleep in a pocket, no app
+  installed. Reports of "Android doesn't advertise when idle" did not hold
+  for a current Samsung flagship.
 
 ## Every problem we actually hit (learn from our afternoon)
 
@@ -182,6 +226,20 @@ netsh advfirewall firewall add rule name="ESP32 OTA (espota)" dir=in action=allo
     Windows Firewall blocking espota's inbound transfer (see step 7).
 12. **`--upload-field` belongs to `arduino-cli upload`**, not `compile` —
     two-step it when doing OTA.
+13. **"aurora" won't appear in Samsung's Bluetooth pairing list.** One UI
+    filters out generic BLE peripherals. Pair through nRF Connect instead,
+    with the firmware calling `startSecurity()` on connect so the bond
+    dialog pops regardless.
+14. **`match=0` doesn't mean your IRK math is wrong.** The stack resolves
+    bonded RPAs before your callback sees them — check for the identity
+    address before debugging AES byte orders (we brute-forced four
+    orderings before realizing the packets were pre-resolved).
+15. **The away-hysteresis bites during testing:** Bluetooth must be off for
+    the full `away_s` (default 10 min) before re-enabling it counts as an
+    arrival. Shorter toggles do nothing, by design.
+16. **The Windows-side WiFi band can shuffle after sleep cycles** (2.4 ↔
+    5/6 GHz on band-steered SSIDs) — unrelated to the board, but it will
+    confuse your network debugging if you don't know to look.
 
 ## Security model
 
@@ -195,5 +253,10 @@ netsh advfirewall firewall add rule name="ESP32 OTA (espota)" dir=in action=allo
 
 ## Roadmap
 
-- Pi relay: one-line curl over Tailscale → full off-LAN wake.
-- Android app so the token lives somewhere better than a browser bookmark.
+- LD2410 mmWave motion over UART (body-presence, complements the phone
+  signal) — sensor TX → an input-only pin (35/36/39), **never IO2** (it's a
+  boot-strap pin and the sensor's idle-high TX blocks the serial bootloader).
+- Pi relay: one-line curl over Tailscale → full off-LAN wake. The relay
+  script should fire twice ~10 s apart (gotcha #9).
+- Android app: wake button + status + token storage (presence needs nothing
+  on the phone, so the app stays thin).

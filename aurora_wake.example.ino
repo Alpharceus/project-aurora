@@ -22,9 +22,9 @@
 const char* WIFI_SSID   = "YOUR_SSID";        // 2.4 GHz network (ESP32 has no 5/6 GHz radio)
 const char* WIFI_PASS   = "YOUR_PASS";
 const char* WAKE_TOKEN  = "pick-a-long-random-string";
-// PC Realtek NIC MAC, from `getmac /v` (format: AA:BB:CC:DD:EE:FF)
+// Target PC's wired-NIC MAC, from `getmac /v` (format: AA:BB:CC:DD:EE:FF)
 const uint8_t PC_MAC[6] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
-const char* FW_VERSION  = "2.1";
+const char* FW_VERSION  = "2.2";
 // -----------------------------------
 
 // Presence tuning — runtime-adjustable via /config, persisted in NVS
@@ -81,6 +81,19 @@ uint32_t pairWindowEnd = 0;
 uint8_t  rpaRing[8][6];
 volatile uint8_t rpaRingPos = 0;
 
+// Why the last magic packet was sent — Orion reads this from /status after
+// a resume and decides greet / stay dormant / warn.
+char     lastWakeCause[24] = "none";
+volatile uint32_t lastWakeMs   = 0;
+volatile bool     haveLastWake = false;
+
+static void recordWake(const char* cause) {
+  strncpy(lastWakeCause, cause, sizeof(lastWakeCause) - 1);
+  lastWakeCause[sizeof(lastWakeCause) - 1] = 0;
+  lastWakeMs = millis();
+  haveLastWake = true;
+}
+
 void sendMagicPacket() {
   uint8_t pkt[102];
   memset(pkt, 0xFF, 6);
@@ -129,6 +142,7 @@ static void onPhoneSighted(int rssi) {
   phonePresent = true;
   if (arriving && cfgArrivalWake) {
     sendMagicPacket();             // wake on an awake PC is a harmless no-op
+    recordWake("arrival");
     cntArrivalWakes++;
   }
 }
@@ -235,6 +249,17 @@ static bool tokenOk() {
 void handleWake() {
   if (!tokenOk()) { server.send(403, "text/plain", "no"); return; }
   sendMagicPacket();
+  // Callers may self-identify (/wake?src=remote, src=app) for attribution.
+  char cause[24] = "manual";
+  if (server.hasArg("src")) {
+    String src = server.arg("src");
+    char clean[13] = {0};
+    int n = 0;
+    for (size_t i = 0; i < src.length() && n < 12; i++)
+      if (isalnum(src[i]) || src[i] == '-' || src[i] == '_') clean[n++] = src[i];
+    if (n > 0) snprintf(cause, sizeof(cause), "manual:%s", clean);
+  }
+  recordWake(cause);
   server.send(200, "text/plain",
               ETH.linkUp() ? "magic packet sent"
                            : "sent, but ETH link is DOWN - check cable");
@@ -327,6 +352,12 @@ void handleStatus() {
     s += String(lastPhoneRssi) + " dBm)\n";
   }
   s += "motion: no sensor\n";
+  if (haveLastWake) {
+    s += "last_wake: " + String(lastWakeCause) + " " +
+         String((now - lastWakeMs) / 1000) + "s ago\n";
+  } else {
+    s += "last_wake: none\n";
+  }
   s += "ble: adv=" + String(cntAdv) + " rpa=" + String(cntRpa) +
        " match=" + String(cntMatch) + " id_match=" + String(cntIdMatch) +
        " arrival_wakes=" + String(cntArrivalWakes) + "\n";

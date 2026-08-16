@@ -166,6 +166,15 @@ unseen before "away", default 600), `arrival_wake` (0/1), `rssi_min`
 
 `GET /forget?token=…` wipes bonds for re-pairing.
 
+**Wake attribution for downstream automation:** `/status` reports
+`last_wake: <cause> <age>s ago`, where cause is `arrival` (presence fired
+it) or `manual` — optionally tagged by the caller via `/wake?src=remote`
+→ `manual:remote`. A host-side agent can then correlate: OS resume event
+present + `arrival`, seconds old → the owner just walked in (greet);
+`manual:remote` → remote access (stay quiet); packet sent but no OS resume
+event → the machine was awake anyway (do nothing). The board supplies the
+*why*; the OS supplies the *whether*.
+
 Two findings worth stealing for your own build:
 
 - **You may never see a resolvable RPA in your scan callback.** NimBLE loads

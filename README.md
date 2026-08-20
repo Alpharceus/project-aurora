@@ -41,6 +41,14 @@ What we actually used:
   and the data dongle retires.
 - Jumper wires, one Ethernet cable, a USB wall charger.
 
+## Enclosure
+
+Printable case for the WT32-ETH01: `aurora_box_body.stl` + `aurora_box_lid.stl`.
+Any plastic works (ours is PLA) — plastic is transparent to both the WiFi/BLE
+radio and, if you later add an mmWave sensor, its 24 GHz radar; just keep
+metallic filament and foil out of the build. Leave openings for the Ethernet
+jack and the power leads.
+
 ## Setup
 
 ### 1. Prepare the firmware

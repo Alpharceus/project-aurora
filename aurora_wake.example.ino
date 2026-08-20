@@ -24,7 +24,7 @@ const char* WIFI_PASS   = "YOUR_PASS";
 const char* WAKE_TOKEN  = "pick-a-long-random-string";
 // Target PC's wired-NIC MAC, from `getmac /v` (format: AA:BB:CC:DD:EE:FF)
 const uint8_t PC_MAC[6] = { 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF };
-const char* FW_VERSION  = "2.2";
+const char* FW_VERSION  = "2.3";
 // -----------------------------------
 
 // Presence tuning — runtime-adjustable via /config, persisted in NVS
@@ -73,13 +73,8 @@ volatile bool     everSeen     = false;
 volatile int      lastPhoneRssi = 0;
 volatile uint32_t cntAdv = 0, cntRpa = 0, cntMatch = 0, cntArrivalWakes = 0;
 volatile uint32_t cntIdMatch = 0;
-volatile uint32_t cntByType[4] = {0, 0, 0, 0};  // public/random/public_id/random_id
 bool     pairingOpen  = false;
 uint32_t pairWindowEnd = 0;
-
-// Debug ring of recently heard RPAs (little-endian, as received)
-uint8_t  rpaRing[8][6];
-volatile uint8_t rpaRingPos = 0;
 
 // Why the last magic packet was sent — Orion reads this from /status after
 // a resume and decides greet / stay dormant / warn.
@@ -154,7 +149,6 @@ class ScanCB : public NimBLEScanCallbacks {
     const NimBLEAddress a = d->getAddress();
     const uint8_t* v = a.getVal();
     uint8_t t = a.getType();
-    if (t < 4) cntByType[t]++;
     // Path 1: the stack already resolved a bonded peer's RPA — the report
     // carries the identity address we captured at pairing.
     if (haveIdAddr && memcmp(v, idAddr, 6) == 0) {
@@ -167,8 +161,6 @@ class ScanCB : public NimBLEScanCallbacks {
     if (t != BLE_ADDR_RANDOM) return;
     if ((v[5] & 0xC0) != 0x40) return;          // not an RPA
     cntRpa++;
-    memcpy(rpaRing[rpaRingPos % 8], v, 6);
-    rpaRingPos++;
     if (rpaMatchesIrk(v)) {
       cntMatch++;
       onPhoneSighted(d->getRSSI());
@@ -288,16 +280,6 @@ void handleForget() {
   server.send(200, "text/plain", "bonds and IRK wiped - /pair to re-pair");
 }
 
-static String hexBytes(const uint8_t* b, size_t n) {
-  String s;
-  for (size_t i = 0; i < n; i++) {
-    char buf[3];
-    snprintf(buf, sizeof(buf), "%02x", b[i]);
-    s += buf;
-  }
-  return s;
-}
-
 void handleConfig() {
   if (!tokenOk()) { server.send(403, "text/plain", "no"); return; }
   if (server.hasArg("away_s")) {
@@ -315,19 +297,6 @@ void handleConfig() {
   String s = "away_s: " + String(cfgAwayS) + "\n";
   s += "arrival_wake: " + String(cfgArrivalWake ? 1 : 0) + "\n";
   s += "rssi_min: " + String(cfgRssiMin) + "\n";
-  server.send(200, "text/plain", s);
-}
-
-void handleDebug() {
-  if (!tokenOk()) { server.send(403, "text/plain", "no"); return; }
-  String s = "irk: " + (haveIRK ? hexBytes(phoneIRK, 16) : String("none")) + "\n";
-  s += "id_addr: " + (haveIdAddr ? hexBytes(idAddr, 6) : String("none")) + "\n";
-  s += "types: pub=" + String(cntByType[0]) + " rand=" + String(cntByType[1]) +
-       " pub_id=" + String(cntByType[2]) + " rand_id=" + String(cntByType[3]) +
-       " id_match=" + String(cntIdMatch) + "\n";
-  uint8_t n = rpaRingPos < 8 ? rpaRingPos : 8;
-  for (uint8_t i = 0; i < n; i++)
-    s += "rpa: " + hexBytes(rpaRing[i], 6) + "\n";
   server.send(200, "text/plain", s);
 }
 
@@ -398,7 +367,6 @@ void setup() {
   server.on("/status", handleStatus);
   server.on("/pair", handlePair);
   server.on("/forget", handleForget);
-  server.on("/debug", handleDebug);
   server.on("/config", handleConfig);
   server.begin();
 

@@ -258,6 +258,28 @@ Two findings worth stealing for your own build:
     5/6 GHz on band-steered SSIDs) — unrelated to the board, but it will
     confuse your network debugging if you don't know to look.
 
+## Build your own companion app
+
+We use a small Android app as the wake button; its code isn't published
+because there's nothing to it — the board's HTTP API is the whole product,
+and any client is ~50 lines around these rules:
+
+- **Wake:** `GET /wake?token=<token>&src=app` — fire **twice, ~10 s apart**
+  (gotcha #9: a NIC freshly entering sleep drops the first packet). The
+  `src=` tag is free-form; it shows up in `/status` as `last_wake:
+  manual:<src>` so downstream automation can tell your button from other
+  triggers.
+- **Status:** `GET /status` — plain text, one `key: value` per line; poll it
+  on app open for board health, presence state, and last-wake attribution.
+- **Store the token like a credential** (Android: EncryptedSharedPreferences;
+  iOS: Keychain), entered by the user at first run — never hardcoded.
+- **Remote reach:** no port forwarding — put the board's IP behind a
+  Tailscale subnet route (a `/32` advertised by any always-on LAN device)
+  and the same HTTP calls work from anywhere. One caveat: machines that are
+  *already on the LAN* should not accept that route, or their traffic to the
+  board detours through the relay (and OTA updates break — ask us how we
+  know).
+
 ## Security model
 
 - The token is the only gate, over plain HTTP, LAN-only. Accepted trade:
